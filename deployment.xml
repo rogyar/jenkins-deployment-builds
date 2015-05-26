@@ -155,7 +155,7 @@
 
         <taskdef name="sync" classname="phing.tasks.ext.FileSyncTask"/>
         <sync
-            sourcedir="${final-source}/"
+            sourcedir="${final-source}"
             destinationdir="${final-destination}"
             excludeList="${patterns-excluded}"
             dryrun="${dryrun}"
