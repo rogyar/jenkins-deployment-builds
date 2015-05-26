@@ -29,6 +29,7 @@
                 <!-- Create source directory -->
                 <phingcall target="-create-source-dir"/>
                 <!-- Here should be a clone task -->
+                <phingcall target="-clone-repo"/>
             </then>
         </if>
         <if>
@@ -120,6 +121,11 @@
     </target>
     <target name="-current-ignore-patterns" description="Show all patterns from sync ignore list">
         <exec command="cat ${sync.exclude.file}" passthru="true"/>
+    </target>
+    <target name="-clone-repo" description="Clones repository into source directory">
+        <gitclone
+            repository="${initial-repo-path}"
+            targetPath="${repo.dir.resolved}" />
     </target>
 
     <target name="-sync-execute-task">
