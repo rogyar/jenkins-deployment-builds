@@ -1,0 +1,216 @@
+<?xml version="1.0" ?>
+<project name="atwix local db update" basedir="." default="build">
+<property name="version" value="1.0" />
+<property file="../config/build.properties" />
+<property name="privkeyfile" value="/home/jenkins/.ssh/id_rsa" /> 
+<property name="pubkeyfile" value="/home/jenkins/.ssh/id_rsa.pub" /> 
+<property name="sshport" value="22" />
+<property name="dump.filename" value="dev_dump.sql" />
+<property name="localdb" value="" />
+<property name="localdbuser" value="" />
+<property name="localdbpassword" value="" />
+<property name="localdomain" value="" />
+<property name="failonerror" value="" />
+
+<target name="sync-db">
+  <echo msg="Usage: phing -Ddbhost='' -Ddbport='' -Dlocaldb='' -Dlocaldomain='' -Dlocaldbuser='' -Dlocaldbpassword='' sync-db" />
+  <if>
+    <equals arg1="${localdb}" arg2="" />
+    <then>
+      <fail message="You forget to specify local database name" />
+    </then>
+  </if>
+  <if>
+    <equals arg1="${localdbuser}" arg2="" />
+    <then>
+      <fail message="You forget to specify local database user name" />
+    </then>
+  </if>
+  <if>
+    <equals arg1="${localdbpassword}" arg2="" />
+    <then>
+      <fail message="You forget to specify local database user password" />
+    </then>
+  </if>
+  <echo message="Connecting ${sync.remote.user}@${sync.remote.host}" />
+  <ssh username="${sync.remote.user}" 
+  host="${sync.remote.host}" 
+  pubkeyfile="${pubkeyfile}"
+  privkeyfile="${privkeyfile}"
+  display="false"
+  command="cd ${sync.destination.projectdir}/var/tmp 2>&amp;1" 
+  port="${sshport}"
+  property="cd.output" />
+  
+  <phingcall target="-make-remote-dump" />
+  <phingcall target="-gzip-dump" />
+  <phingcall target="-download-dump" />
+  <phingcall target="-remove-dump" />
+  <phingcall target="-unzip-local-dump" />
+  <phingcall target="-create-local-db" />
+  <phingcall target="-import-local-dump" />
+  <phingcall target="-set-local-domain" /> 
+</target>
+
+<!-- Get remote DB credentials from config file (if there's no ability to run n98) -->
+<target name="get-remote-config-file">
+  <exec command="mkdir tmp"/>
+  <scp username="${sync.remote.user}"
+  host="${sync.remote.host}"
+  pubkeyfile="${pubkeyfile}"
+  privkeyfile="${privkeyfile}"
+  fetch="true"
+  todir="tmp"
+  port="${sshport}"
+  file="${sync.destination.projectdir}/app/etc/local.xml" />
+</target>
+
+<!-- Run remote mysql command (if there's no ability to run n98) -->
+<target name="-make-remote-dump">
+  <phingcall target="get-remote-config-file" />
+  <xmlproperty file="tmp/local.xml" collapseAttributes="true"/>
+  <property name="dbname" value="${config.global.resources.default_setup.connection.dbname}" />
+  
+  <!-- Create empty tables for ignored items -->
+  <property name="dump.raw.command.initial" value="mysqldump --no-data -h'${config.global.resources.default_setup.connection.host}' -u'${config.global.resources.default_setup.connection.username}' -p'${config.global.resources.default_setup.connection.password}' '${dbname}' log_url log_url_info log_visitor log_visitor_info log_visitor_online report_event | sed -e 's/DEFINER[ ]*=[ ]*[^*]*\*/\*/' > '${dump.filename}'" />
+
+  <echo msg="${dump.raw.command.initial}" />
+
+  <!-- Append the dump with other tables and data -->
+  <property name="dump.raw.command" value="mysqldump --ignore-table=${dbname}.log_url --ignore-table=${dbname}.log_url_info --ignore-table=${dbname}.log_visitor --ignore-table=${dbname}.log_visitor_info --ignore-table=${dbname}.log_visitor_online --ignore-table=${dbname}.report_event -h'${config.global.resources.default_setup.connection.host}' -u'${config.global.resources.default_setup.connection.username}' -p'${config.global.resources.default_setup.connection.password}' '${dbname}' | sed -e 's/DEFINER[ ]*=[ ]*[^*]*\*/\*/' >> '${dump.filename}'" />
+
+  <echo msg="${dump.raw.command}" />
+
+  <!-- Run dump commands on the remote environment -->
+  <ssh username="${sync.remote.user}" 
+  host="${sync.remote.host}" 
+  pubkeyfile="${pubkeyfile}"
+  privkeyfile="${privkeyfile}"
+  display="true"
+  command="mkdir -p ${sync.destination.projectdir}/var/tmp ; cd ${sync.destination.projectdir}/var/tmp ; ${dump.raw.command.initial} 2>&amp;1"
+  failonerror="${failonerror}"
+  port="${sshport}"
+  property="rawdump.output" />
+
+  <echo message="${rawdump.output}" />
+
+  <ssh username="${sync.remote.user}" 
+  host="${sync.remote.host}" 
+  pubkeyfile="${pubkeyfile}"
+  privkeyfile="${privkeyfile}"
+  display="true"
+  command="cd ${sync.destination.projectdir}/var/tmp ; ${dump.raw.command} 2>&amp;1"
+  failonerror="${failonerror}"
+  port="${sshport}"
+  property="rawdump.output" />
+  <echo message="${rawdump.output}" />
+</target>
+
+<target name="-gzip-dump" >
+  <echo message="Gzipping current dump" />
+  <ssh username="${sync.remote.user}" 
+  host="${sync.remote.host}" 
+  pubkeyfile="${pubkeyfile}"
+  privkeyfile="${privkeyfile}"
+  display="false"
+  command="cd ${sync.destination.projectdir}/var/tmp ; gzip -9 -f ${dump.filename} 2>&amp;1" 
+  port="${sshport}"
+  property="gzip.output" />
+</target>
+
+<target name="-download-dump">
+  <echo message="Downloading dump to the local server" />
+  <exec command="mkdir dumps" dir="." />
+  <scp username="${sync.remote.user}"
+  host="${sync.remote.host}"
+  pubkeyfile="${pubkeyfile}"
+  privkeyfile="${privkeyfile}"
+  fetch="true"
+  port="${sshport}"
+  todir="dumps"
+  file="${sync.destination.projectdir}/var/tmp/${dump.filename}.gz">
+  </scp>
+</target>
+
+<!-- Remove remote dump -->
+<target name="-remove-dump">
+  <ssh username="${sync.remote.user}" 
+  host="${sync.remote.host}" 
+  pubkeyfile="${pubkeyfile}"
+  privkeyfile="${privkeyfile}"
+  display="false"
+  command="cd ${sync.destination.projectdir}/var/tmp ; rm -f ${dump.filename}.gz ; rm -f ${dump.filename} 2>&amp;1" 
+  port="${sshport}"
+  property="remove.output" />
+  <echo message="${remove.output}" />
+</target>
+
+<!-- Create database on a local server -->
+<target name="-create-local-db"> 
+  <if>
+    <equals arg1="" arg2="${localdb}" />
+    <then>
+      <fail message="Error: No local database name was set" />
+    </then>
+  </if>
+  <!-- Put sql commands to the temporary file and execute after -->
+<!--  <exec command="echo 'DROP DATABASE ${localdb};' > tmpdata" passthru="true" />
+  <exec command="mysql -h ${dbhost} -P ${dbport} -u ${localdbuser} -p${localdbpassword} &lt; tmpdata"  outputProperty="sql.output"/>
+  <echo message="${sql.output}" />
+  <exec command="echo 'CREATE DATABASE ${localdb};' > tmpdata" passthru="true"/>
+  <exec command="mysql -h ${dbhost} -P ${dbport} -u ${localdbuser} -p${localdbpassword} &lt; tmpdata"  outputProperty="sql.output"/>
+  -->
+  <exec command="rm -f tmpdata" /> 
+  <if>
+    <contains string="${sql.output}" substring="ERROR" />
+    <then>
+      <fail message="${sql.output}" />
+    </then>
+  </if>
+</target>
+
+<!-- Unzip the dump on the local environment -->
+<target name="-unzip-local-dump">
+  <exec command="cd dumps; gunzip -f ${dump.filename}.gz" passthru="true" />
+</target>
+
+<!-- Import the dump to the local DB -->
+<target name="-import-local-dump">
+  <echo msg="cd dumps; mysql -h ${dbhost} -P ${dbport} -u ${localdbuser} -p${localdbpassword} ${localdb} &lt; ${dump.filename}" />
+  <exec command="cd dumps; mysql -h ${dbhost} -P ${dbport} -u ${localdbuser} -p${localdbpassword} ${localdb} &lt; ${dump.filename}" 
+    outputProperty="sql.output" 
+    passthru="true" />
+  <if>
+    <or>
+      <contains string="${sql.output}" substring="ERROR" />
+      <contains string="${sql.output}" substring="cannot" />
+   </or>
+   <then>
+     <fail message="${sql.output}" />
+   </then>
+  </if>
+  <echo message="${sql.output}" />
+</target>
+
+<!-- Remove the dump from local environment -->
+<target name="remove-local-dump">
+  <exec command="cd dumps; rm ${dump.filename}" passthru="true" />
+</target>
+
+
+<!-- Set value for web/secure/base_url and web/unsecure/base_url -->
+<target name="-set-local-domain">
+  <if>
+    <equals arg1="" arg2="${localdomain}" />
+    <then>
+      <echo msg="No domain name was set, ignoring" />
+    </then>
+    <else>
+      <property name="change.domain.command" value="UPDATE core_config_data SET value=&quot;${localdomain}&quot; WHERE path IN (&quot;web/unsecure/base_url&quot;, &quot;web/secure/base_url&quot;);" />
+      <exec command="echo '${change.domain.command}' > tmpdata" passthru="true" />
+      <exec command="mysql -h ${dbhost} -P ${dbport} -u ${localdbuser} -p${localdbpassword} ${localdb} &lt; tmpdata" outputProperty="sql.output" />     
+      <echo msg="${sql.output}" />
+    </else>
+  </if>  
+</target>
+</project>

@@ -1,0 +1,117 @@
+<?xml version="1.0" ?>
+<project name="get-server-changes" basedir="." default="build">
+<property name="version" value="1.0" />
+<!-- Files working copy path -->
+<property name="repo.dir" value="../../public" />
+<!-- Name of the brench with server's changeset -->
+<property name="server.branch" value="remote_staging" />
+<!-- A name of the main git remote -->
+<property name="remote.name" value="origin" />
+<!-- Run files sync in verbose mode -->
+<property name="sync.verbose" value="true" />
+<!-- Run files sync with no files changes, just to test the process -->
+<property name="dryrun" value="false" />
+<!-- Remove files on dest server which were deleted on the source -->
+<property name="sync-delete" value="false" />
+<property name="ssh-port" value="" />
+<!-- The branch to sync remote files with -->
+<property name="working.branch" value="master" />
+<!-- Comma separated list of patterns to exclude -->
+<property name="patterns-excluded" value="" /> 
+ 
+<resolvepath propertyName="repo.dir.resolved" file="${repo.dir}" />
+
+<!-- Public targets -->
+
+<target name="sync-files" description="Copy files">
+  <phingcall target="-sync-execute-task"/>
+</target>
+
+<target name="dryrun" description="Force files sync process do not write the changes. Just list">
+  <property name="files.sync.dryrun" value="true" override="true" />
+</target>
+
+<target name="git-sync-changes" description="Checkout git branch for storing server changes">
+  <!-- Fetch repository -->
+  <phingcall target="-fetch-branches" />
+  <!-- Checkout 'master' branch -->
+  <phingcall target="-checkout-working-branch" />
+  <!-- Remove old 'server' branch -->
+  <phingcall target="-remove-server-branch" />
+  <!-- Pull latest changes from 'master' -->
+  <phingcall target="-pull-working-branch" />
+  <!-- Create new 'server' branch from 'master' -->
+  <phingcall target="-create-server-branch" />
+</target>
+<target name="commit-server-changes" description="Commit changes to the server branch" >
+  <!-- Add all changes to the git working tree -->
+  <exec command="git add . 2>&amp;1" dir="${repo.dir.resolved}" passthru="true" /> 
+  <exec command="git commit -am 'Changes from the server' 2>&amp;1" dir="${repo.dir.resolved}" passthru="true" />
+  <!-- Push all changes to the 'server' branch -->
+  <phingcall target="-push-server-branch" />
+</target>
+
+<!-- Private targets -->
+<target name="-checkout-working-branch" description="Checkout ${working.branch} branch">
+  <gitcheckout
+      repository="${repo.dir.resolved}" 
+      branchname="${working.branch}" quiet="false" create="false" />
+</target>
+<target name="-remove-server-branch" description="Remove server branch from repo">
+  <exec command="git branch -D ${server.branch} 2>&amp;1" dir="${repo.dir.resolved}" passthru="true"/>
+  <exec command="git push ${remote.name} :${server.branch} 2>&amp;1" dir="${repo.dir.resolved}" passthru="true"/>
+</target>
+<target name="-fetch-branches" description="Fetch git branches">
+  <exec command="git fetch -p 2>&amp;1" dir="${repo.dir.resolved}" passthru="true"/>
+</target>
+<target name="-pull-working-branch" description="Pull changes from remote ${working.branch}">
+  <gitpull
+      repository="${repo.dir.resolved}" refspec="${working.branch}" 
+      strategy="recursive"
+      source="${remote.name}" />
+</target>
+<target name="-create-server-branch" description="Create 'server' branch">
+  <gitcheckout
+      repository="${repo.dir.resolved}" 
+      branchname="${server.branch}" quiet="false" create="true" />
+</target>
+<target name="-push-server-branch" description="Push 'server' branch" >
+  <exec command="git push ${remote.name} ${server.branch} 2>&amp;1" dir="${repo.dir.resolved}" passthru="true" />
+</target>
+<target name="-current-ignore-patterns" description="Show all patterns from sync ignore list">
+  <exec command="cat ${sync.exclude.file}" passthru="true" />
+</target>
+<target name="-init-files-sync" description="Load main settings">
+  <tstamp />
+  <property file="../config/build.properties" />
+</target>
+
+<target name="-sync-execute-task" depends="-init-files-sync">
+  <if>
+    <not>
+      <isset property="sync.verbose" />
+    </not>
+    <then>
+      <property name="sync.verbose" value="true" override="true" />
+      <echo message="The value of sync.verbose has been set to true" />
+    </then>
+  </if>
+  <!-- Display current ignore files list for rsync -->
+    
+ <!-- <phingcall target="-current-ignore-patterns" /> -->
+
+  <property name="remote-server" value="${username}@${host}" />
+  <taskdef name="sync" classname="phing.tasks.ext.FileSyncTask" />
+  <sync
+    sourcedir="${remote-server}:${destination-dir}/"
+    destinationdir="${source-dir}"
+    excludefile="${sync.exclude.file}"
+    excludeList="${patterns-excluded}"
+    dryrun="${dryrun}"   
+    checksum="true"
+    delete="${sync-delete}"
+    sshPort="${ssh-port}"
+    itemizeChanges="true"
+    verbose="${sync.verbose}" />
+</target>
+</project>

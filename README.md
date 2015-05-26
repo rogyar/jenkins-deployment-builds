@@ -1,0 +1,1 @@
+## Phing build configurations for projects deployment and synchronisation 
